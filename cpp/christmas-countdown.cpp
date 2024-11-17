@@ -1,85 +1,119 @@
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <iomanip>
+// Only works on windows systems
+#include <windows.h>
 #include <string>
-#include <ctime>
 #include <sstream>
-#include <SFML/Graphics.hpp>
+#include <ctime>
 
-class ChristmasCountdown {
-public:
-    ChristmasCountdown() {
-        window.create(sf::VideoMode(800, 600), "Christmas Countdown");
-        font.loadFromFile("Helvetica.ttf");
-        text.setFont(font);
-        text.setCharacterSize(24);
-        text.setPosition(50, 250);
-        christmas = std::chrono::system_clock::from_time_t(std::mktime(&setChristmasDate()));
-        update_time();
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+std::wstring GetChristmasCountdown() {
+    SYSTEMTIME systemTime;
+    GetLocalTime(&systemTime);
+
+    tm current = { 0 };
+    current.tm_year = systemTime.wYear - 1900;
+    current.tm_mon = systemTime.wMonth - 1;
+    current.tm_mday = systemTime.wDay;
+    current.tm_hour = systemTime.wHour;
+    current.tm_min = systemTime.wMinute;
+    current.tm_sec = systemTime.wSecond;
+
+    tm christmas = { 0 };
+    christmas.tm_year = current.tm_year;
+    christmas.tm_mon = 11;
+    christmas.tm_mday = 25;
+
+    time_t currentTime = mktime(&current);
+    time_t christmasTime = mktime(&christmas);
+
+    if (difftime(christmasTime, currentTime) < 0) {
+        christmas.tm_year += 1;
+        christmasTime = mktime(&christmas);
     }
 
-    void run() {
-        while (window.isOpen()) {
-            sf::Event event;
-            while (window.pollEvent(event)) {
-                if (event.type == sf::Event::Closed)
-                    window.close();
-            }
-            window.clear();
-            window.draw(text);
-            window.display();
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            update_time();
-        }
+    double secondsRemaining = difftime(christmasTime, currentTime);
+    int days = static_cast<int>(secondsRemaining / 86400);
+    secondsRemaining -= days * 86400;
+    int hours = static_cast<int>(secondsRemaining / 3600);
+    secondsRemaining -= hours * 3600;
+    int minutes = static_cast<int>(secondsRemaining / 60);
+    int seconds = static_cast<int>(secondsRemaining) % 60;
+
+    std::wstringstream countdown;
+    countdown << L"Countdown to Christmas:\n"
+              << days << L" days, "
+              << hours << L" hours, "
+              << minutes << L" minutes, "
+              << seconds << L" seconds";
+
+    return countdown.str();
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    const wchar_t CLASS_NAME[] = L"ChristmasCountdown";
+
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = WindowProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = CLASS_NAME;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+
+    RegisterClassW(&wc);
+
+    HWND hwnd = CreateWindowExW(
+        0,
+        CLASS_NAME,
+        L"Christmas Countdown",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 400, 200,
+        NULL, NULL, hInstance, NULL
+    );
+
+    if (!hwnd) {
+        return 0;
     }
 
-private:
-    sf::RenderWindow window;
-    sf::Font font;
-    sf::Text text;
-    std::chrono::system_clock::time_point christmas;
+    ShowWindow(hwnd, nCmdShow);
 
-    std::tm setChristmasDate() {
-        std::tm tm = {};
-        tm.tm_year = 2024 - 1900;
-        tm.tm_mon = 11; 
-        tm.tm_mday = 25; 
-        tm.tm_hour = 0;
-        tm.tm_min = 0;
-        tm.tm_sec = 0;
-        return tm;
+    MSG msg = {};
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
 
-    void update_time() {
-        auto now = std::chrono::system_clock::now();
-        auto time_remaining = std::chrono::duration_cast<std::chrono::seconds>(christmas - now).count();
-
-        if (time_remaining > 0) {
-            int months = (2024 - 2023) * 12 + 12 - (now_time().tm_mon + 1);
-            int days = (time_remaining / (24 * 3600));
-            int hours = (time_remaining % (24 * 3600)) / 3600;
-            int minutes = (time_remaining % 3600) / 60;
-            int seconds = time_remaining % 60;
-
-            std::ostringstream countdown_message;
-            countdown_message << "Time until Christmas: " << months << " months, "
-                              << days << " days, " << hours << " hours, "
-                              << minutes << " minutes, and " << seconds << " seconds";
-            text.setString(countdown_message.str());
-        } else {
-            text.setString("Merry Christmas!");
-        }
-    }
-
-    std::tm now_time() {
-        std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-        return *std::localtime(&t);
-    }
-};
-
-int main() {
-    ChristmasCountdown countdown;
-    countdown.run();
     return 0;
+}
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    static std::wstring countdownText;
+
+    switch (uMsg) {
+    case WM_CREATE:
+        SetTimer(hwnd, 1, 1000, NULL);
+        return 0;
+
+    case WM_TIMER:
+        countdownText = GetChristmasCountdown();
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+
+        DrawTextW(hdc, countdownText.c_str(), -1, &rect, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    }
+
+    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
